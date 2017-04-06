@@ -16,15 +16,21 @@ http://www.springframework.org/schema/beans http://www.springframework.org/schem
         <apikit:router config-ref="config" doc:name="APIkit Router"/>
         <exception-strategy ref="apiKitGlobalExceptionMapping" doc:name="Reference Exception Strategy"/>
     </flow>
+    <flow name="api-main-ssl">
+        <http:listener config-ref="Common_HTTP_Listener_Configuration" path="/api/*" doc:name="HTTP"/>
+        <apikit:router config-ref="config" doc:name="APIkit Router"/>
+        <exception-strategy ref="apiKitGlobalExceptionMapping" doc:name="Reference Exception Strategy"/>
+    </flow>
     <flow name="api-main-fix">
         <http:listener config-ref="api-httpListenerConfig" path="/*" doc:name="HTTP">
             <http:response-builder>
             </http:response-builder>
         </http:listener>
         <logger level="INFO" doc:name="Logger"/>
-        <http:request config-ref="HTTP_Request_Configuration" path="/api/odata.svc{object}" method="GET" doc:name="HTTP">
+        <http:request config-ref="HTTP_Request_Configuration" path="#[&quot;/api/odata.svc&quot;+message.inboundProperties.'http.request.path']" method="GET" doc:name="HTTP">
             <http:request-builder>
-                <http:uri-param paramName="object" value="#[message.inboundProperties.'http.request.path']"/>
+                <http:query-params expression="#[message.inboundProperties.'http.query.params']"/>
+                <http:uri-params expression="#[message.inboundProperties.'http.uri.params']"/>
             </http:request-builder>
         </http:request>
         <logger level="INFO" doc:name="Logger"/>
