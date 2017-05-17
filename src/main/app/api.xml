@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<mule xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+<mule xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
 	xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
 	xmlns:db="http://www.mulesoft.org/schema/mule/db"
 	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
@@ -8,17 +8,35 @@ http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/cu
 http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
 http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
 http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
-http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.1.xsd">
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.1.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd">
     <configuration defaultExceptionStrategy-ref="apiKitGlobalExceptionMapping" doc:name="Configuration" doc:description="Use as implicit default exception strategy." />
     <http:request-config name="HTTP_Request_Configuration" host="localhost" port="8081" doc:name="HTTP Request Configuration"/>
     <flow name="api-main">
-        <http:listener config-ref="api-httpListenerConfig" path="/api/*" doc:name="HTTP"/>
-        <apikit:router config-ref="config" doc:name="APIkit Router"/>
+        <http:listener config-ref="api-httpListenerConfig" path="/api/*" doc:name="HTTP" parseRequest="false"/>
+        <choice doc:name="Choice">
+            <when expression="#[message.inboundProperties.'http.request.path'.endsWith(&quot;$batch&quot;)]">
+       			 <flow-ref name="handleBatch" doc:name="handleBatch"/>
+       		</when>
+       		<otherwise>
+		       	<logger level="DEBUG" doc:name="Logger"/>
+		        <apikit:router config-ref="config" doc:name="APIkit Router"/>
+       		</otherwise>
+        </choice>
         <exception-strategy ref="apiKitGlobalExceptionMapping" doc:name="Reference Exception Strategy"/>
     </flow>
     <flow name="api-main-ssl">
         <http:listener config-ref="Common_HTTP_Listener_Configuration" path="/api/*" doc:name="HTTP"/>
-        <apikit:router config-ref="config" doc:name="APIkit Router"/>
+        <choice doc:name="Choice">
+            <when expression="#[message.inboundProperties.'http.request.path'.endsWith(&quot;$batch&quot;)]">
+       			 <flow-ref name="handleBatch" doc:name="handleBatch"/>
+       		</when>
+       		<otherwise>
+		       	<logger level="DEBUG" doc:name="Logger"/>
+		        <apikit:router config-ref="config" doc:name="APIkit Router"/>
+       		</otherwise>
+        </choice>
         <exception-strategy ref="apiKitGlobalExceptionMapping" doc:name="Reference Exception Strategy"/>
     </flow>
     <flow name="api-main-fix">
@@ -26,7 +44,7 @@ http://www.springframework.org/schema/beans http://www.springframework.org/schem
             <http:response-builder>
             </http:response-builder>
         </http:listener>
-        <logger level="INFO" doc:name="Logger"/>
+        <logger level="DEBUG" doc:name="Logger"/>
         <http:request config-ref="HTTP_Request_Configuration" path="#[&quot;/api/odata.svc&quot;+message.inboundProperties.'http.request.path']" method="GET" doc:name="HTTP">
             <http:request-builder>
                 <http:query-params expression="#[message.inboundProperties.'http.query.params']"/>
@@ -37,6 +55,18 @@ http://www.springframework.org/schema/beans http://www.springframework.org/schem
         <set-property propertyName="Content-type" doc:name="Property" value="application/atom+xml;type=feed;charset=utf-8"/>
         <exception-strategy ref="apiKitGlobalExceptionMapping" doc:name="Reference Exception Strategy"/>
     </flow>
+    <flow name="post:/$batch">
+        <set-payload doc:name="Set Payload" value="{}"/>
+    </flow>
+    <sub-flow name="handleBatch">
+        <object-to-string-transformer doc:name="Object to String"/>
+        <logger message="#[&quot;\n&quot;]Batch - Inbound #[message.inboundProperties],  #[&quot;\n\n++++++++++++++\n&quot;]Payload: #[payload] #[&quot;\n\n++++++++++++++\n&quot;]" level="INFO" doc:name="Logger"/>
+        <scripting:component doc:name="Parse Response">
+            <scripting:script engine="Groovy"><![CDATA[new com.mulesoft.mule.tools.multipart.ParseMultiPart().parseResponse(payload);]]></scripting:script>
+        </scripting:component>
+        <logger message="#[&quot;\n&quot;]Result Payload: #[payload]" level="INFO" doc:name="Logger"/>
+        <set-property propertyName="http.status" value="202" doc:name="Property"/>
+    </sub-flow>
     <flow name="get:/customers:config">
         <!-- Build your query using Data Weave -->
         <dw:transform-message doc:name="Build Query">
@@ -74,19 +104,19 @@ http://www.springframework.org/schema/beans http://www.springframework.org/schem
             <dw:set-variable variableName="originalPayload" resource="classpath:StoreOriginalPayload.dwl" />
         </dw:transform-message>
         <logger level="DEBUG" message="#[payload]" doc:name="Logger"/>
-        <!-- Call your database -->
-        <db:insert config-ref="MySQL_Configuration" doc:name=" Database" autoGeneratedKeys="true">
+        <db:insert config-ref="MySQL_Configuration" autoGeneratedKeys="true" doc:name=" Database">
             <db:dynamic-query><![CDATA[#[payload]]]></db:dynamic-query>
         </db:insert>
+        <!-- Call your database -->
         <!-- Check database result -->
         <dw:transform-message doc:name="Check result">
             <dw:set-payload resource="classpath:CheckInsertCustomerResult.dwl" />
         </dw:transform-message>
-        <!-- Prepare your response -->
-        <!-- Build your query using Data Weave -->
         <db:select config-ref="MySQL_Configuration" doc:name="Database">
             <db:dynamic-query><![CDATA[#[payload]]]></db:dynamic-query>
         </db:select>
+        <!-- Prepare your response -->
+        <!-- Build your query using Data Weave -->
         <dw:transform-message doc:name=" Build Response">
             <dw:set-payload resource="classpath:BuildOdataResponse.dwl" />
         </dw:transform-message>
@@ -168,7 +198,7 @@ http://www.springframework.org/schema/beans http://www.springframework.org/schem
         <logger level="DEBUG" message="#[payload]" doc:name="Logger"/>
     </flow>
     <flow name="put:/customers/{customersId}:application/json:config">
-    <logger level="DEBUG" message="#[payload]" doc:name="Logger"/>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
         <dw:transform-message doc:name=" Build Query">
             <dw:set-payload resource="classpath:UpdateCustomer.dwl" />
         </dw:transform-message>
@@ -189,7 +219,7 @@ http://www.springframework.org/schema/beans http://www.springframework.org/schem
                 <set-payload value="#[NullPayload.getInstance()]" doc:name="Set Payload"/>
             </otherwise>
         </choice>
-        <logger level="DEBUG" message="#[payload]" doc:name="Logger"/>
+        <logger level="INFO" message="#[payload]" doc:name="Logger"/>
     </flow>
     <flow name="put:/orders/OrderID_{OrderID}-ShipName_{ShipName}:application/json:config">
     <logger level="DEBUG" message="#[payload]" doc:name="Logger"/>
